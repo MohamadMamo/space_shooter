@@ -1,235 +1,256 @@
 # main.py
 
-import pygame
 import random
-from settings import *
-from utils import load_assets, load_sounds, load_highscore, save_highscore
-from spaceship import Spaceship
-from bullet import Bullet
-from enemy import Enemy, Boss
-from powerup import PowerUp
-from explosion import Explosion
 
-# Initialize Pygame
-pygame.init()
+import pygame
 
-# Load assets and sounds
-assets = load_assets()
-sounds = load_sounds()
+from game_state import GameState
+from settings import (
+    BOSS_BULLET_DAMAGE, BOSS_CONTACT_DAMAGE, BOSS_SCORE, COMBO_UPGRADE_STEP,
+    ENEMY_CONTACT_DAMAGE, ENEMY_SCORE, FPS, HEIGHT, POWERUP_SPAWN_INTERVAL,
+    WHITE, WIDTH, YELLOW,
+)
+from utils import (
+    init_mixer, load_assets, load_highscore, load_sounds, save_highscore,
+    start_music,
+)
 
-# Screen setup
-WIN = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Space Shooter")
+# Game phases. Keeping them explicit removes the old blocking "game over"
+# loop, so the window stays responsive on every screen.
+PLAYING, PAUSED, GAME_OVER = "playing", "paused", "game_over"
 
-def main():
+
+def init_game(headless=False):
+    """Start pygame and build the window, assets, sounds and fonts.
+
+    None of this happens at import time any more: importing this module used
+    to call pygame.init(), open a window and start music, which made the game
+    impossible to test and loaded assets before set_mode() — the ordering that
+    prevented every surface from being convert()ed.
+    """
+    pygame.init()
+    init_mixer()
+
+    flags = pygame.HIDDEN if headless else 0
+    win = pygame.display.set_mode((WIDTH, HEIGHT), flags)
+    pygame.display.set_caption("Space Shooter")
+
+    # Assets load *after* set_mode so they can be converted to the display
+    # format, and fall back to generated art when a file is missing.
+    assets = load_assets()
+    sounds = load_sounds()
+    fonts = {
+        "small": pygame.font.Font(None, 32),
+        "medium": pygame.font.Font(None, 44),
+        "large": pygame.font.Font(None, 72),
+    }
+    return win, assets, sounds, fonts
+
+
+def draw_hud(win, fonts, state):
+    for i, text in enumerate(
+        (f"Score: {state.score}", f"Level: {state.level}", f"High Score: {state.high_score}")
+    ):
+        win.blit(fonts["small"].render(text, True, WHITE), (10, 10 + i * 30))
+    if state.combo > 1:
+        win.blit(
+            fonts["small"].render(f"Combo x{state.combo}", True, YELLOW),
+            (WIDTH - 150, 10),
+        )
+
+
+def draw_centered(win, font, text, y, color=WHITE):
+    surface = font.render(text, True, color)
+    win.blit(surface, (WIDTH // 2 - surface.get_width() // 2, y))
+
+
+def redraw(win, assets, fonts, state, phase, now):
+    win.blit(assets["background"], (0, 0))
+    state.spaceship.draw(win, now)
+    state.spaceship.draw_health_bar(win)
+
+    for bullet in state.bullets:
+        bullet.draw(win)
+    for enemy in state.enemies:
+        enemy.draw(win)
+    for power_up in state.power_ups:
+        power_up.draw(win)
+    for explosion in state.explosions:
+        explosion.draw(win)
+    if state.boss:
+        state.boss.draw(win)
+
+    draw_hud(win, fonts, state)
+
+    if phase == PAUSED:
+        draw_centered(win, fonts["large"], "PAUSED", HEIGHT // 2 - 60)
+        draw_centered(win, fonts["small"], "Press P to resume", HEIGHT // 2 + 20)
+    elif phase == GAME_OVER:
+        draw_centered(win, fonts["large"], "GAME OVER", HEIGHT // 2 - 150)
+        draw_centered(win, fonts["medium"], f"Score: {state.score}", HEIGHT // 2 - 50)
+        draw_centered(win, fonts["medium"], f"Level: {state.level}", HEIGHT // 2)
+        draw_centered(win, fonts["medium"], f"High Score: {state.high_score}", HEIGHT // 2 + 50)
+        draw_centered(win, fonts["small"], "Press R to restart, ESC to quit", HEIGHT // 2 + 150)
+
+    pygame.display.update()
+
+
+def update(state, sounds, dt, now):
+    """Advance one frame of play. Sets state.game_over instead of restarting.
+
+    Restarting is handled by the caller once iteration has finished, which is
+    what the old code got wrong: it rebuilt the entity lists inside the enemy
+    loop, so the next remove() hit a list that no longer held the item.
+    """
+    ship = state.spaceship
+
+    for bullet in state.bullets[:]:
+        bullet.move(dt)
+        if bullet.rect.bottom < 0:
+            state.bullets.remove(bullet)
+
+    for explosion in state.explosions[:]:
+        if explosion.update(dt):
+            state.explosions.remove(explosion)
+
+    killed_bullets = set()
+
+    for enemy in state.enemies[:]:
+        enemy.move(dt)
+
+        if enemy.rect.top > HEIGHT:
+            state.enemies.remove(enemy)
+            state.combo = 1
+            continue
+
+        if enemy.rect.colliderect(ship.rect):
+            if ship.take_damage(ENEMY_CONTACT_DAMAGE, now):
+                state.add_explosion(enemy.rect.centerx, enemy.rect.centery)
+                sounds["explosion"].play()
+                state.enemies.remove(enemy)
+                state.combo = 1
+                if ship.health <= 0:
+                    state.game_over = True
+                    return
+            continue
+
+        for bullet in state.bullets:
+            if id(bullet) in killed_bullets:
+                continue
+            if bullet.rect.colliderect(enemy.rect):
+                killed_bullets.add(id(bullet))
+                state.enemies.remove(enemy)
+                state.add_explosion(enemy.rect.centerx, enemy.rect.centery)
+                state.score += ENEMY_SCORE * state.combo
+                state.combo += 1
+                sounds["explosion"].play()
+                if state.combo % COMBO_UPGRADE_STEP == 0:
+                    ship.upgrade_weapon()
+                break
+
+    if killed_bullets:
+        state.bullets[:] = [b for b in state.bullets if id(b) not in killed_bullets]
+
+    if state.boss:
+        state.boss.move(dt)
+        if state.boss.rect.colliderect(ship.rect):
+            if ship.take_damage(BOSS_CONTACT_DAMAGE, now):
+                sounds["explosion"].play()
+                if ship.health <= 0:
+                    state.game_over = True
+                    return
+        for bullet in state.bullets[:]:
+            if bullet.rect.colliderect(state.boss.rect):
+                state.boss.health -= BOSS_BULLET_DAMAGE
+                state.bullets.remove(bullet)
+                if state.boss.health <= 0:
+                    state.add_explosion(state.boss.rect.centerx, state.boss.rect.centery)
+                    sounds["explosion"].play()
+                    state.boss = None
+                    state.score += BOSS_SCORE
+                    state.advance_level()
+                    break
+
+    for power_up in state.power_ups[:]:
+        power_up.move(dt)
+        if power_up.rect.colliderect(ship.rect):
+            ship.power_up(now)
+            state.power_ups.remove(power_up)
+            sounds["powerup"].play()
+        elif power_up.rect.top > HEIGHT:
+            state.power_ups.remove(power_up)
+
+    # Time-based rather than per-frame, so the spawn rate does not depend on
+    # how fast the machine renders.
+    if random.random() < dt / POWERUP_SPAWN_INTERVAL:
+        state.spawn_power_up()
+
+    if not state.enemies and not state.boss:
+        state.advance_level()
+
+    ship.check_power_up(now)
+
+
+def main(headless=False, max_frames=None):
+    """Run the game. headless/max_frames exist so tests can drive the loop."""
+    win, assets, sounds, fonts = init_game(headless=headless)
+    start_music()
+
+    state = GameState(assets, high_score=load_highscore())
     clock = pygame.time.Clock()
-    run = True
+    phase = PLAYING
+    running = True
+    frames = 0
 
-    spaceship = Spaceship(WIDTH // 2, HEIGHT - 50, assets)
-    bullets = []
-    enemies = []
-    power_ups = []
-    explosions = []
-    boss = None
-    score = 0
-    high_score = load_highscore()
-    level = 1
-    combo = 1
+    try:
+        while running:
+            # Seconds since the last frame; capped so a stall (window drag,
+            # breakpoint) cannot teleport everything across the screen.
+            dt = min(clock.tick(FPS) / 1000.0, 0.05)
+            now = pygame.time.get_ticks()
 
-    def redraw_window():
-        WIN.blit(assets["background"], (0, 0))
-        spaceship.draw(WIN)
-        spaceship.draw_health_bar(WIN)
-
-        for bullet in bullets:
-            bullet.draw(WIN)
-        for enemy in enemies:
-            enemy.draw(WIN)
-        for power_up in power_ups:
-            power_up.draw(WIN)
-        for explosion in explosions[:]:
-            if explosion.draw(WIN):
-                explosions.remove(explosion)
-        if boss:
-            boss.draw(WIN)
-
-        score_text = pygame.font.SysFont("comicsans", 40).render(f"Score: {score}", True, WHITE)
-        level_text = pygame.font.SysFont("comicsans", 40).render(f"Level: {level}", True, WHITE)
-        high_score_text = pygame.font.SysFont("comicsans", 40).render(f"High Score: {high_score}", True, WHITE)
-        WIN.blit(score_text, (10, 10))
-        WIN.blit(level_text, (10, 50))
-        WIN.blit(high_score_text, (10, 90))
-
-        pygame.display.update()
-
-    def spawn_enemies():
-        for _ in range(level * 5):
-            enemies.append(Enemy(random.randint(20, WIDTH - 20), random.randint(-1500, -100), ENEMY_SPEED, assets))
-        if level % 3 == 0:  # Add faster enemies every 3 levels
-            enemies.append(Enemy(random.randint(20, WIDTH - 20), random.randint(-1500, -100), ENEMY_FAST_SPEED, assets))
-
-    def spawn_boss():
-        nonlocal boss
-        boss = Boss(WIDTH // 2, 100, assets)
-
-    def game_over_screen():
-        nonlocal high_score
-        if score > high_score:
-            high_score = score
-            save_highscore(high_score)
-
-        game_over_text = pygame.font.SysFont("comicsans", 60).render("GAME OVER", True, WHITE)
-        score_text = pygame.font.SysFont("comicsans", 40).render(f"Score: {score}", True, WHITE)
-        level_text = pygame.font.SysFont("comicsans", 40).render(f"Level: {level}", True, WHITE)
-        high_score_text = pygame.font.SysFont("comicsans", 40).render(f"High Score: {high_score}", True, WHITE)
-        restart_text = pygame.font.SysFont("comicsans", 30).render("Press R to Restart", True, WHITE)
-
-        WIN.blit(game_over_text, (WIDTH // 2 - game_over_text.get_width() // 2, HEIGHT // 2 - 150))
-        WIN.blit(score_text, (WIDTH // 2 - score_text.get_width() // 2, HEIGHT // 2 - 50))
-        WIN.blit(level_text, (WIDTH // 2 - level_text.get_width() // 2, HEIGHT // 2))
-        WIN.blit(high_score_text, (WIDTH // 2 - high_score_text.get_width() // 2, HEIGHT // 2 + 50))
-        WIN.blit(restart_text, (WIDTH // 2 - restart_text.get_width() // 2, HEIGHT // 2 + 150))
-        pygame.display.update()
-
-        waiting = True
-        while waiting:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
-                    waiting = False
-                    return False
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                    waiting = False
-                    return True
-            clock.tick(FPS)
+                    running = False
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        running = False
+                    elif event.key == pygame.K_p and phase in (PLAYING, PAUSED):
+                        phase = PAUSED if phase == PLAYING else PLAYING
+                    elif event.key == pygame.K_r and phase == GAME_OVER:
+                        state.reset()
+                        phase = PLAYING
 
-    spawn_enemies()
+            if phase == PLAYING:
+                keys = pygame.key.get_pressed()
+                dx = keys[pygame.K_RIGHT] - keys[pygame.K_LEFT]
+                dy = keys[pygame.K_DOWN] - keys[pygame.K_UP]
+                if dx or dy:
+                    state.spaceship.move(dx, dy, dt)
+                if keys[pygame.K_SPACE] and state.fire(now):
+                    sounds["shoot"].play()
 
-    while run:
-        clock.tick(FPS)
+                update(state, sounds, dt, now)
 
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                run = False
+                if state.game_over:
+                    if state.record_high_score():
+                        save_highscore(state.high_score)
+                    phase = GAME_OVER
 
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_LEFT]:
-            spaceship.move(-SPACESHIP_SPEED, 0)
-        if keys[pygame.K_RIGHT]:
-            spaceship.move(SPACESHIP_SPEED, 0)
-        if keys[pygame.K_UP]:
-            spaceship.move(0, -SPACESHIP_SPEED)
-        if keys[pygame.K_DOWN]:
-            spaceship.move(0, SPACESHIP_SPEED)
-        if keys[pygame.K_SPACE]:
-            if spaceship.weapon_level == 1:
-                bullets.append(Bullet(spaceship.rect.centerx, spaceship.rect.top, assets))
-            elif spaceship.weapon_level == 2:
-                bullets.append(Bullet(spaceship.rect.centerx - 10, spaceship.rect.top, assets))
-                bullets.append(Bullet(spaceship.rect.centerx + 10, spaceship.rect.top, assets))
-            elif spaceship.weapon_level == 3:
-                bullets.append(Bullet(spaceship.rect.centerx, spaceship.rect.top, assets))
-                bullets.append(Bullet(spaceship.rect.centerx - 20, spaceship.rect.top, assets))
-                bullets.append(Bullet(spaceship.rect.centerx + 20, spaceship.rect.top, assets))
-            sounds["shoot"].play()
+            redraw(win, assets, fonts, state, phase, now)
 
-        for bullet in bullets[:]:
-            bullet.move()
-            if bullet.rect.bottom < 0:
-                bullets.remove(bullet)
+            frames += 1
+            if max_frames is not None and frames >= max_frames:
+                running = False
+    finally:
+        # Reached however the loop exits, including quitting from the game-over
+        # screen — the old code returned early and skipped pygame.quit().
+        if state.record_high_score():
+            save_highscore(state.high_score)
+        pygame.quit()
 
-        for enemy in enemies[:]:
-            enemy.move()
-            if enemy.rect.top > HEIGHT:
-                enemies.remove(enemy)
-                combo = 1
-            elif enemy.rect.colliderect(spaceship.rect):
-                spaceship.health -= 10
-                explosions.append(Explosion(enemy.rect.centerx, enemy.rect.centery, assets))
-                enemies.remove(enemy)
-                sounds["explosion"].play()
-                if spaceship.health <= 0:
-                    run = game_over_screen()
-                    if not run:
-                        return
-                    else:
-                        spaceship = Spaceship(WIDTH // 2, HEIGHT - 50, assets)
-                        bullets = []
-                        enemies = []
-                        power_ups = []
-                        explosions = []
-                        boss = None
-                        score = 0
-                        level = 1
-                        combo = 1
-                        spawn_enemies()
-            else:
-                for bullet in bullets[:]:
-                    if bullet.rect.colliderect(enemy.rect):
-                        if enemy in enemies:
-                            bullets.remove(bullet)
-                            explosions.append(Explosion(enemy.rect.centerx, enemy.rect.centery, assets))
-                            enemies.remove(enemy)
-                            score += 10 * combo
-                            combo += 1
-                            sounds["explosion"].play()
-                            if combo % 5 == 0:
-                                spaceship.upgrade_weapon()
+    return state
 
-        if boss:
-            boss.move()
-            if boss.rect.colliderect(spaceship.rect):
-                spaceship.health -= 20
-                sounds["explosion"].play()
-                if spaceship.health <= 0:
-                    run = game_over_screen()
-                    if not run:
-                        return
-                    else:
-                        spaceship = Spaceship(WIDTH // 2, HEIGHT - 50, assets)
-                        bullets = []
-                        enemies = []
-                        power_ups = []
-                        explosions = []
-                        boss = None
-                        score = 0
-                        level = 1
-                        combo = 1
-                        spawn_enemies()
-            else:
-                for bullet in bullets[:]:
-                    if bullet.rect.colliderect(boss.rect):
-                        boss.health -= 5
-                        bullets.remove(bullet)
-                        if boss.health <= 0:
-                            explosions.append(Explosion(boss.rect.centerx, boss.rect.centery, assets))
-                            boss = None
-                            score += 500
-                            level += 1
-                            spawn_enemies()
-
-        for power_up in power_ups[:]:
-            power_up.move()
-            if power_up.rect.colliderect(spaceship.rect):
-                spaceship.power_up()
-                power_ups.remove(power_up)
-                sounds["powerup"].play()
-            elif power_up.rect.top > HEIGHT:
-                power_ups.remove(power_up)
-
-        if random.randint(1, 300) == 1:
-            power_ups.append(PowerUp(random.randint(20, WIDTH - 20), 0, assets))
-
-        if len(enemies) == 0 and not boss:
-            level += 1
-            if level % 5 == 0:
-                spawn_boss()
-            else:
-                spawn_enemies()
-
-        spaceship.check_power_up()
-        redraw_window()
-
-    pygame.quit()
 
 if __name__ == "__main__":
     main()
