@@ -8,9 +8,11 @@ class Spaceship:
         self.image = assets["spaceship"]
         self.rect = self.image.get_rect(center=(x, y))
         self.health = 100
+        # TODO: powered_up is never consumed -- decide what a power-up should grant
         self.powered_up = False
         self.power_up_end_time = 0
         self.weapon_level = 1
+        self.last_hit_time = 0
 
     def move(self, dx, dy):
         self.rect.x += dx

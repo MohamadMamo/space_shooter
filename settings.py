@@ -1,5 +1,9 @@
 # settings.py
 
+import os
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Screen dimensions
 WIDTH, HEIGHT = 800, 600
 
@@ -19,20 +23,22 @@ POWERUP_DURATION = 5000  # Power-up lasts 5 seconds
 BOSS_HEALTH = 100
 
 # Asset paths
-SPACESHIP_IMAGE = "assets/spaceship.png"
-BULLET_IMAGE = "assets/bullet.png"
-ENEMY_IMAGE = "assets/enemy.png"
-ENEMY_FAST_IMAGE = "assets/enemy_fast.png"
-BOSS_IMAGE = "assets/boss.png"
-EXPLOSION_FRAMES = [f"assets/explosion_{i}.png" for i in range(5)]
-POWERUP_IMAGE = "assets/powerup.png"
-BACKGROUND_IMAGE = "assets/background.png"
+SPACESHIP_IMAGE = os.path.join(BASE_DIR, "assets", "spaceship.png")
+BULLET_IMAGE = os.path.join(BASE_DIR, "assets", "bullet.png")
+ENEMY_IMAGE = os.path.join(BASE_DIR, "assets", "enemy.png")
+ENEMY_FAST_IMAGE = os.path.join(BASE_DIR, "assets", "enemy_fast.png")
+BOSS_IMAGE = os.path.join(BASE_DIR, "assets", "boss.png")
+EXPLOSION_FRAMES = [
+    os.path.join(BASE_DIR, "assets", f"explosion_{i}.png") for i in range(5)
+]
+POWERUP_IMAGE = os.path.join(BASE_DIR, "assets", "powerup.png")
+BACKGROUND_IMAGE = os.path.join(BASE_DIR, "assets", "background.png")
 
 # Sounds
-BACKGROUND_MUSIC = "assets/background_music.mp3"
-SHOOT_SOUND = "assets/shoot.wav"
-EXPLOSION_SOUND = "assets/explosion.wav"
-POWERUP_SOUND = "assets/powerup.wav"
+BACKGROUND_MUSIC = os.path.join(BASE_DIR, "assets", "background_music.wav")
+SHOOT_SOUND = os.path.join(BASE_DIR, "assets", "shoot.wav")
+EXPLOSION_SOUND = os.path.join(BASE_DIR, "assets", "explosion.wav")
+POWERUP_SOUND = os.path.join(BASE_DIR, "assets", "powerup.wav")
 
 # High score file
-HIGHSCORE_FILE = "highscore.txt"
+HIGHSCORE_FILE = os.path.join(BASE_DIR, "highscore.txt")

@@ -18,21 +18,31 @@ def load_assets():
     return assets
 
 def load_sounds():
-    sounds = {
-        "background_music": pygame.mixer.music.load(BACKGROUND_MUSIC),
-        "shoot": pygame.mixer.Sound(SHOOT_SOUND),
-        "explosion": pygame.mixer.Sound(EXPLOSION_SOUND),
-        "powerup": pygame.mixer.Sound(POWERUP_SOUND),
-    }
-    pygame.mixer.music.play(-1)  # Loop the background music
+    sounds = {}
+    try:
+        pygame.mixer.music.load(BACKGROUND_MUSIC)
+        pygame.mixer.music.play(-1)  # Loop the background music
+        sounds["shoot"] = pygame.mixer.Sound(SHOOT_SOUND)
+        sounds["explosion"] = pygame.mixer.Sound(EXPLOSION_SOUND)
+        sounds["powerup"] = pygame.mixer.Sound(POWERUP_SOUND)
+    except pygame.error:
+        # No audio device available (e.g. a headless environment) --
+        # skip sound loading rather than crashing.
+        pass
     return sounds
 
 def load_highscore():
     if os.path.exists(HIGHSCORE_FILE):
-        with open(HIGHSCORE_FILE, 'r') as f:
-            return int(f.read())
+        try:
+            with open(HIGHSCORE_FILE, 'r') as f:
+                return int(f.read())
+        except (ValueError, OSError):
+            return 0
     return 0
 
 def save_highscore(score):
-    with open(HIGHSCORE_FILE, 'w') as f:
-        f.write(str(score))
+    try:
+        with open(HIGHSCORE_FILE, 'w') as f:
+            f.write(str(score))
+    except OSError:
+        pass
