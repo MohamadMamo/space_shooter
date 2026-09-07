@@ -49,7 +49,7 @@ To start the game, run the following command:
 
 ## Scoring
 
-- Destroying an enemy scores `10 * combo` points; the combo counter increases with each enemy destroyed in a row and resets if an enemy passes you or hits your ship.
+- Destroying an enemy scores `10 * combo` points; the combo counter increases with each enemy destroyed in a row and resets to 1 if an enemy passes you (reaches the bottom of the screen) or when you restart after a game over. It does not reset when an enemy or the boss hits your ship.
 - Every 5th combo hit upgrades your weapon (up to weapon level 3, firing more bullets at once).
 - Defeating a boss scores 500 points and advances you to the next level.
 - Your best score is saved to `highscore.txt` and displayed in-game.
@@ -66,7 +66,7 @@ Images:
 - `boss.png`: The boss that appears every 5 levels.
 - `explosion_0.png` .. `explosion_4.png`: The explosion animation frames.
 - `powerup.png`: The power-up pickup.
-- `background.png`: The scrolling background.
+- `background.png`: The background, drawn once per frame at a fixed position (it does not scroll).
 
 Sounds:
 - `background_music.wav`: Looping background music.

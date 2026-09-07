@@ -11,8 +11,9 @@ them, since settings.py just points at these filenames.
 Usage:
     python tools/generate_placeholder_assets.py
 
-Regenerates every file settings.py declares under assets/: 9 PNGs (drawn
-with pygame primitives) and 4 silent WAV files.
+Regenerates every file settings.py declares under assets/: 12 PNGs (5
+single-image assets, 5 explosion animation frames, the powerup and the
+background -- all drawn with pygame primitives) and 4 silent WAV files.
 """
 
 import os

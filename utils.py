@@ -17,18 +17,33 @@ def load_assets():
     }
     return assets
 
+class _NullSound:
+    """No-op stand-in for pygame.mixer.Sound, used when there is no audio
+    device available. Lets call sites keep calling sounds["..."].play()
+    unconditionally instead of crashing with a KeyError mid-game."""
+
+    def play(self, *args, **kwargs):
+        pass
+
+
 def load_sounds():
-    sounds = {}
     try:
         pygame.mixer.music.load(BACKGROUND_MUSIC)
         pygame.mixer.music.play(-1)  # Loop the background music
-        sounds["shoot"] = pygame.mixer.Sound(SHOOT_SOUND)
-        sounds["explosion"] = pygame.mixer.Sound(EXPLOSION_SOUND)
-        sounds["powerup"] = pygame.mixer.Sound(POWERUP_SOUND)
+        sounds = {
+            "shoot": pygame.mixer.Sound(SHOOT_SOUND),
+            "explosion": pygame.mixer.Sound(EXPLOSION_SOUND),
+            "powerup": pygame.mixer.Sound(POWERUP_SOUND),
+        }
     except pygame.error:
-        # No audio device available (e.g. a headless environment) --
-        # skip sound loading rather than crashing.
-        pass
+        # No audio device available (e.g. a headless environment) -- fall
+        # back to silent no-op sounds so the game still runs instead of
+        # crashing the first time something calls sounds["..."].play().
+        sounds = {
+            "shoot": _NullSound(),
+            "explosion": _NullSound(),
+            "powerup": _NullSound(),
+        }
     return sounds
 
 def load_highscore():
